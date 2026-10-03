@@ -4,6 +4,7 @@ export type AskDbRuntimeStore = {
   readonly structured: AskDbConfig;
   /** Canonical string map from {@link flattenAskDbConfig} (same keys as former merged `process.env`). */
   readonly flat: Readonly<Record<string, string>>;
+  readonly deprecations?: readonly string[];
 };
 
 let stored: AskDbRuntimeStore | undefined;

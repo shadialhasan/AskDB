@@ -8,6 +8,16 @@ import {
   parsePositiveInteger,
 } from "./defaults.js";
 import { flatToAiEnv, getAskDbRuntimeStore } from "./runtime-store.js";
+import { normalizeAskDbConfig } from "./normalize.js";
+import { applyProviderConnectionEnv } from "./flatten.js";
+
+export type AskDbRuntimeAiSection = {
+  provider: string;
+  connection: string;
+  model: string | undefined;
+  /** AiEnv for `@askdb/ai` registry calls, built from this section's connection only. */
+  env: Record<string, string | undefined>;
+};
 
 /**
  * Typed AI runtime settings for `@askdb/core` (not `process.env`).
@@ -19,6 +29,12 @@ export type AskDbRuntimeAiConfig = {
    * `createLanguageModelFromEnv`.
    */
   aiEnv: Record<string, string | undefined>;
+  language: AskDbRuntimeAiSection & { modelFamily: string | undefined };
+  embedding: (AskDbRuntimeAiSection & {
+    model: string;
+    dimensions: number | undefined;
+    requestDimensions?: number;
+  }) | undefined;
 };
 
 export type AskDbRuntimeRagEmbedderConfig = {
@@ -149,6 +165,8 @@ export type AskDbRuntimeConfig = {
   modes: AskDbRuntimeModesConfig;
   nlToSql: AskDbRuntimeNlToSqlConfig;
   studio: AskDbRuntimeStudioConfig;
+  /** Deprecation warnings detected during config load. */
+  readonly deprecations?: readonly string[];
 };
 
 function pickFlat(flat: Readonly<Record<string, string>>, key: string): string | undefined {
@@ -161,8 +179,71 @@ function pickFlat(flat: Readonly<Record<string, string>>, key: string): string |
  * Returns typed runtime configuration from the snapshot installed by {@link bootstrapAskDbEnv}.
  */
 export function getAskDbRuntimeConfig(): AskDbRuntimeConfig {
-  const { structured, flat } = getAskDbRuntimeStore();
+  const store = getAskDbRuntimeStore();
+  const { structured, flat } = store;
   const aiEnv = flatToAiEnv(flat);
+
+  const { config: normalized, deprecations: normalizedDeprecations } = normalizeAskDbConfig(structured);
+  const deprecations = store.deprecations ?? normalizedDeprecations;
+
+  // Language section runtime view
+  const lang = normalized.ai.language;
+  const langConns = normalized.ai.providerConfig[lang.provider] ?? [];
+  const langConn = langConns.find((c) => c.name === lang.connection) ?? { name: lang.connection };
+  const langEnv: Record<string, string | undefined> = {};
+  langEnv.ASKDB_AI_PROVIDER = lang.provider;
+  applyProviderConnectionEnv(langEnv as Record<string, string>, lang.provider, langConn, {
+    model: lang.model,
+    modelFamily: lang.modelFamily,
+    usage: "language",
+  });
+
+  const runtimeLanguage: AskDbRuntimeAiSection & { modelFamily: string | undefined } = {
+    provider: lang.provider,
+    connection: lang.connection,
+    model: lang.model,
+    modelFamily: lang.modelFamily,
+    env: langEnv,
+  };
+
+  // Embedding section runtime view
+  let runtimeEmbedding: (AskDbRuntimeAiSection & { model: string; dimensions: number | undefined; requestDimensions?: number }) | undefined;
+  if (normalized.rag.embedder === "ai" && normalized.ai.embedding) {
+    const emb = normalized.ai.embedding;
+    const embConns = normalized.ai.providerConfig[emb.provider] ?? [];
+    const embConn = embConns.find((c) => c.name === emb.connection) ?? { name: emb.connection };
+    const embEnv: Record<string, string | undefined> = {};
+    embEnv.ASKDB_AI_PROVIDER = emb.provider;
+    applyProviderConnectionEnv(embEnv as Record<string, string>, emb.provider, embConn, {
+      model: emb.model,
+      modelFamily: embConn.modelFamily,
+      usage: "embedding",
+    });
+
+    runtimeEmbedding = {
+      provider: emb.provider,
+      connection: emb.connection,
+      model: emb.model,
+      dimensions: emb.dimensions,
+      requestDimensions: emb.requestDimensions,
+      env: embEnv,
+    };
+  }
+
+  // Derive rt.rag.embedder for legacy RAG consumers
+  let ragApiKey: string | undefined;
+  let ragBaseUrl: string | undefined;
+  let ragModel: string | undefined;
+
+  if (runtimeEmbedding && runtimeEmbedding.provider === "openai") {
+    ragApiKey = runtimeEmbedding.env.OPENAI_API_KEY;
+    ragBaseUrl = runtimeEmbedding.env.OPENAI_BASE_URL;
+    ragModel = runtimeEmbedding.model;
+  } else {
+    ragApiKey = pickFlat(flat, "OPENAI_API_KEY");
+    ragBaseUrl = pickFlat(flat, "OPENAI_BASE_URL");
+    ragModel = runtimeEmbedding?.model ?? pickFlat(flat, "ASKDB_RAG_EMBEDDER_MODEL");
+  }
 
   const logStdoutRaw = pickFlat(flat, "ASKDB_LOG_STDOUT");
   const logStdout = logStdoutRaw !== undefined && ["1", "true", "yes"].includes(logStdoutRaw.toLowerCase());
@@ -215,6 +296,8 @@ export function getAskDbRuntimeConfig(): AskDbRuntimeConfig {
     flat,
     ai: {
       aiEnv,
+      language: runtimeLanguage,
+      embedding: runtimeEmbedding,
     },
     introspection: {
       provider: structured.introspection.provider,
@@ -231,15 +314,9 @@ export function getAskDbRuntimeConfig(): AskDbRuntimeConfig {
     },
     rag: {
       embedder: {
-        apiKey:
-          pickFlat(flat, "ASKDB_RAG_EMBEDDER_API_KEY") ??
-          pickFlat(flat, "ASKDB_AI_API_KEY") ??
-          pickFlat(flat, "OPENAI_API_KEY"),
-        baseURL:
-          pickFlat(flat, "ASKDB_RAG_EMBEDDER_BASE_URL") ??
-          pickFlat(flat, "ASKDB_AI_BASE_URL") ??
-          pickFlat(flat, "OPENAI_BASE_URL"),
-        model: pickFlat(flat, "ASKDB_RAG_EMBEDDER_MODEL"),
+        apiKey: ragApiKey,
+        baseURL: ragBaseUrl,
+        model: ragModel,
       },
     },
     logging: {
@@ -264,6 +341,7 @@ export function getAskDbRuntimeConfig(): AskDbRuntimeConfig {
     studio: {
       execute: resolveStudioExecuteConfig(structured, flat),
     },
+    deprecations,
   };
 }
 

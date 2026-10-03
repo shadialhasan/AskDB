@@ -18,17 +18,24 @@ import type {
  */
 
 // ---------------------------------------------------------------------------
-// AI provider configs
+// AI provider connections and functional sections
 // ---------------------------------------------------------------------------
 
-export type OpenaiConfig = {
+export type NamedConnection<T> = T & {
+  /** Defaults to "default". Unique within its provider. */
+  name?: string;
+};
+
+export type Connections<T> = NamedConnection<T> | readonly NamedConnection<T>[];
+
+export type OpenaiConnection = {
   apiKey?: string;
   baseUrl?: string;
-  /** When unset, `flattenAskDbConfig` applies the default OpenAI language model (see `@askdb/config` defaults). */
+  /** @deprecated Use `ai.language.model`. Removed at 1.0. */
   model?: string;
 };
 
-export type AzureConfig = {
+export type AzureConnection = {
   apiKey?: string;
   secondaryApiKey?: string;
   /**
@@ -39,56 +46,84 @@ export type AzureConfig = {
   resourceName?: string;
   /** Full endpoint URL. Overrides `resourceName` when both are set. */
   baseUrl?: string;
-  /** When unset, `flattenAskDbConfig` applies the default Azure deployment name (see `@askdb/config` defaults). */
-  model?: string;
   apiVersion?: string;
+  /** @deprecated Use `ai.language.model`. Removed at 1.0. */
+  model?: string;
   /**
    * Underlying model id backing `model` (the deployment name), e.g. `"gpt-5"`
    * or `"o3-mini"`. Deployment names are arbitrary aliases chosen at deploy
    * time, so AskDB can't always infer reasoning-model support from `model`
    * alone — set this when your deployment name doesn't match the model id.
+   *
+   * @deprecated Use `ai.language.modelFamily`. Removed at 1.0.
    */
   modelFamily?: string;
 };
 
-export type FoundryConfig = {
+export type FoundryConnection = {
   apiKey?: string;
   secondaryApiKey?: string;
-  model?: string;
-  apiVersion?: string;
-  /** See {@link AzureConfig.resourceName}. */
+  /** See {@link AzureConnection.resourceName}. */
   resourceName?: string;
-  /** See {@link AzureConfig.baseUrl}. */
+  /** See {@link AzureConnection.baseUrl}. */
   baseUrl?: string;
-  /** See {@link AzureConfig.modelFamily}. */
+  apiVersion?: string;
+  /** @deprecated Use `ai.language.model`. Removed at 1.0. */
+  model?: string;
+  /** See {@link AzureConnection.modelFamily}. @deprecated Use `ai.language.modelFamily`. Removed at 1.0. */
   modelFamily?: string;
 };
 
-export type AnthropicConfig = {
+export type AnthropicConnection = {
   apiKey?: string;
   baseUrl?: string;
-  /** When unset, `flattenAskDbConfig` applies the default Anthropic language model (see `@askdb/config` defaults). */
+  /** @deprecated Use `ai.language.model`. Removed at 1.0. */
   model?: string;
 };
 
-export type GoogleConfig = {
+export type GoogleConnection = {
   apiKey?: string;
   baseUrl?: string;
-  /** When unset, `flattenAskDbConfig` applies the default Gemini language model (see `@askdb/config` defaults). */
+  /** @deprecated Use `ai.language.model`. Removed at 1.0. */
   model?: string;
 };
 
 /** Vercel AI Gateway (`ai.provider: "gateway"`), built into `ai` — no extra provider package. */
-export type GatewayConfig = {
+export type GatewayConnection = {
   /** AI Gateway API key. Flattened to `AI_GATEWAY_API_KEY`. */
   apiKey?: string;
   baseUrl?: string;
-  /**
-   * Gateway model id in `<upstream>/<model>` form, e.g. `"anthropic/claude-sonnet-4-6"`.
-   * When unset, `flattenAskDbConfig` applies the default gateway model (see `@askdb/config` defaults).
-   */
+  /** @deprecated Use `ai.language.model`. Removed at 1.0. */
   model?: string;
 };
+
+export type CustomConnection = {
+  apiKey?: string;
+  baseUrl?: string;
+  resourceName?: string;
+  secondaryApiKey?: string;
+  apiVersion?: string;
+  /** @deprecated Use `ai.language.model`. Removed at 1.0. */
+  model?: string;
+  /** @deprecated Use `ai.language.modelFamily`. Removed at 1.0. */
+  modelFamily?: string;
+  [extra: string]: unknown;
+};
+
+/** @deprecated Use {@link OpenaiConnection}. Removed at 1.0. */
+export type OpenaiConfig = OpenaiConnection;
+/** @deprecated Use {@link AzureConnection}. Removed at 1.0. */
+export type AzureConfig = AzureConnection;
+/** @deprecated Use {@link FoundryConnection}. Removed at 1.0. */
+export type FoundryConfig = FoundryConnection;
+/** @deprecated Use {@link AnthropicConnection}. Removed at 1.0. */
+export type AnthropicConfig = AnthropicConnection;
+/** @deprecated Use {@link GoogleConnection}. Removed at 1.0. */
+export type GoogleConfig = GoogleConnection;
+/** @deprecated Use {@link GatewayConnection}. Removed at 1.0. */
+export type GatewayConfig = GatewayConnection;
+/** @deprecated Use {@link CustomConnection}. Removed at 1.0. */
+export type CustomProviderConfig = CustomConnection;
 
 /**
  * Provider-portable reasoning/latency effort for AskDB model calls. Unset
@@ -110,98 +145,72 @@ export type AskDbAiReasoningConfig = {
   enrichment?: AskDbReasoningEffort;
 };
 
-/** All provider-specific configs as optional fields — intersected per-branch to require only the active provider's key. */
-export type AiProviderConfigs = {
-  openai?: OpenaiConfig;
-  azure?: AzureConfig;
-  foundry?: FoundryConfig;
-  anthropic?: AnthropicConfig;
-  google?: GoogleConfig;
-  gateway?: GatewayConfig;
+export type AiProviderConnections = {
+  openai?: Connections<OpenaiConnection>;
+  azure?: Connections<AzureConnection>;
+  foundry?: Connections<FoundryConnection>;
+  anthropic?: Connections<AnthropicConnection>;
+  google?: Connections<GoogleConnection>;
+  gateway?: Connections<GatewayConnection>;
+  /** @deprecated Use provider id directly under providerConfig. Removed at 1.0. */
+  custom?: CustomConnection;
+  /** Any other key is a custom provider id (an adapter registered under that name). */
+  [provider: string]: Connections<CustomConnection> | undefined;
 };
 
-/** Discriminated union branch for `ai` when `provider` is `"openai"`. */
-export type OpenaiAiConfig = {
-  provider: "openai";
-  providerConfig: AiProviderConfigs & { openai: OpenaiConfig };
-  reasoning?: AskDbAiReasoningConfig;
-};
+/** @deprecated Use {@link AiProviderConnections}. Removed at 1.0. */
+export type AiProviderConfigs = AiProviderConnections;
 
-/** Discriminated union branch for `ai` when `provider` is `"azure"`. */
-export type AzureAiConfig = {
-  provider: "azure";
-  providerConfig: AiProviderConfigs & { azure: AzureConfig };
-  reasoning?: AskDbAiReasoningConfig;
-};
-
-/** Discriminated union branch for `ai` when `provider` is `"foundry"`. */
-export type FoundryAiConfig = {
-  provider: "foundry";
-  providerConfig: AiProviderConfigs & { foundry: FoundryConfig };
-  reasoning?: AskDbAiReasoningConfig;
-};
-
-/** Discriminated union branch for `ai` when `provider` is `"anthropic"`. */
-export type AnthropicAiConfig = {
-  provider: "anthropic";
-  providerConfig: AiProviderConfigs & { anthropic: AnthropicConfig };
-  reasoning?: AskDbAiReasoningConfig;
-};
-
-/** Discriminated union branch for `ai` when `provider` is `"google"`. */
-export type GoogleAiConfig = {
-  provider: "google";
-  providerConfig: AiProviderConfigs & { google: GoogleConfig };
-  reasoning?: AskDbAiReasoningConfig;
-};
-
-/** Discriminated union branch for `ai` when `provider` is `"gateway"` (Vercel AI Gateway). */
-export type GatewayAiConfig = {
-  provider: "gateway";
-  providerConfig: AiProviderConfigs & { gateway: GatewayConfig };
-  reasoning?: AskDbAiReasoningConfig;
-};
-
-/** Generic connection settings for a provider AskDB has no dedicated branch for.
- *  Flattened to the universal ASKDB_AI_* keys; works end to end only when the
- *  consuming registry has an adapter registered under this provider name. */
-export type CustomProviderConfig = {
-  apiKey?: string;
-  baseUrl?: string;
+export type AskDbAiLanguageConfig = {
+  /** Provider for language queries. Default: `ai.provider`. */
+  provider?: string;
+  /** Named connection inside `ai.providerConfig.<provider>`. Default: `"default"`. */
+  connection?: string;
+  /** Language model identifier. Default: the provider's default language model. */
   model?: string;
-};
-
-/** Branch for custom/third-party providers. `(string & {})` preserves literal
- *  autocomplete for the known providers while accepting any other string.
- *
- *  **Type-level hole**: TypeScript cannot exclude specific string literals from
- *  `string & {}`, so every known provider literal (`"openai"`, `"azure"`, …) is
- *  technically assignable to this branch as well. As a result, a misconfigured
- *  object like `{ provider: "openai" }` (no `providerConfig`) compiles without
- *  error. `flattenAskDbConfig` closes this gap at runtime: it calls
- *  `requireProviderBranch` in each known-provider branch, which throws a clear
- *  `askdb.config: ai.providerConfig.<provider> is required …` error instead of
- *  crashing with a raw `TypeError` when the expected branch is absent. */
-export type CustomAiConfig = {
-  /** Any provider string not covered by a first-party branch. Works end to end
-   *  only when the host registry has an adapter registered under this name.
-   *  See the three-tier model: known literal (zero code) → custom string + registered
-   *  adapter (~40 lines) → BYO `LanguageModel` via `ask({ model })` (no config). */
-  provider: string & {};
-  providerConfig?: { custom?: CustomProviderConfig };
+  /** The underlying model id when `model` is an alias (e.g. Azure deployment names). */
+  modelFamily?: string;
   reasoning?: AskDbAiReasoningConfig;
 };
 
-/** Discriminated union of all supported AI provider branches plus the generic
- *  custom-provider escape hatch for third-party or host-registered adapters. */
-export type AskDbAiConfig =
-  | OpenaiAiConfig
-  | AzureAiConfig
-  | FoundryAiConfig
-  | AnthropicAiConfig
-  | GoogleAiConfig
-  | GatewayAiConfig
-  | CustomAiConfig;
+export type AskDbAiEmbeddingConfig = {
+  /** Provider for embeddings. Default: `ai.provider`. */
+  provider?: string;
+  /** Named connection inside `ai.providerConfig.<provider>`. Default: `"default"`. */
+  connection?: string;
+  /** Embedding model identifier (required when rag.embedder is "ai"). */
+  model: string;
+  /** Dimensions of the embedding vector. Optional when known to AskDB. */
+  dimensions?: string | number;
+};
+
+export type AskDbAiConfig = {
+  /** Default provider for language and embedding sections. */
+  provider?: string;
+  /** Provider connections (credentials, endpoints). */
+  providerConfig?: AiProviderConnections;
+  /** Language model selection and reasoning options. */
+  language?: AskDbAiLanguageConfig;
+  /** Embedding model selection for RAG. */
+  embedding?: AskDbAiEmbeddingConfig;
+  /** @deprecated Use `ai.language.reasoning`. Removed at 1.0. */
+  reasoning?: AskDbAiReasoningConfig;
+};
+
+/** @deprecated Use {@link AskDbAiConfig}. Removed at 1.0. */
+export type OpenaiAiConfig = AskDbAiConfig & { provider?: "openai" };
+/** @deprecated Use {@link AskDbAiConfig}. Removed at 1.0. */
+export type AzureAiConfig = AskDbAiConfig & { provider?: "azure" };
+/** @deprecated Use {@link AskDbAiConfig}. Removed at 1.0. */
+export type FoundryAiConfig = AskDbAiConfig & { provider?: "foundry" };
+/** @deprecated Use {@link AskDbAiConfig}. Removed at 1.0. */
+export type AnthropicAiConfig = AskDbAiConfig & { provider?: "anthropic" };
+/** @deprecated Use {@link AskDbAiConfig}. Removed at 1.0. */
+export type GoogleAiConfig = AskDbAiConfig & { provider?: "google" };
+/** @deprecated Use {@link AskDbAiConfig}. Removed at 1.0. */
+export type GatewayAiConfig = AskDbAiConfig & { provider?: "gateway" };
+/** @deprecated Use {@link AskDbAiConfig}. Removed at 1.0. */
+export type CustomAiConfig = AskDbAiConfig;
 
 // ---------------------------------------------------------------------------
 // RAG configs
@@ -412,7 +421,8 @@ export type AskDbConfig = {
 
   rag: {
     embedder: AskDbRagEmbedder;
-    embedderConfig: {
+    /** @deprecated Use `ai.embedding`. Removed at 1.0. */
+    embedderConfig?: {
       openai?: OpenaiRagEmbedderConfig;
     };
     store: AskDbRagStore;

@@ -1,5 +1,6 @@
 import type { AskDbConfig } from "./types.js";
 import { flattenAskDbConfig } from "./flatten.js";
+import { normalizeAskDbConfig } from "./normalize.js";
 
 export const ASKDB_ENV_PROJECTION = Symbol.for("askdb.envProjection");
 
@@ -8,6 +9,7 @@ export type AskDbEnvProjection = {
   /** Nested config as authored (same reference passed to {@link defineConfig}). */
   readonly config: AskDbConfig;
   readonly entries: Readonly<Record<string, string>>;
+  readonly deprecations?: readonly string[];
 };
 
 /**
@@ -22,10 +24,12 @@ export type AskDbEnvProjection = {
  * ```
  */
 export function defineConfig<const T extends AskDbConfig>(config: T): AskDbEnvProjection {
+  const { deprecations } = normalizeAskDbConfig(config);
   return {
     [ASKDB_ENV_PROJECTION]: true,
     config,
     entries: flattenAskDbConfig(config),
+    deprecations,
   };
 }
 

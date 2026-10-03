@@ -44,6 +44,12 @@ export function SettingsPage() {
                 <dl className="definition-list">
                   <dt>Store</dt>
                   <dd>{ragStatus.store.kind}</dd>
+                  <dt>Embedder</dt>
+                  <dd>
+                    {ragStatus.embedder.kind === "mock"
+                      ? "mock"
+                      : `${ragStatus.embedder.provider ?? "ai"} (${ragStatus.embedder.model ?? "default"})`}
+                  </dd>
                   <dt>Lock file</dt>
                   <dd>{ragStatus.files.lock ? "present" : "missing"}</dd>
                   {ragStatus.store.kind === "file" && (

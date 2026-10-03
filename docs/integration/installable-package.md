@@ -209,7 +209,7 @@ ASKDB_AI_MODEL=claude-sonnet-4-6  # optional; default: claude-sonnet-4-6
 ai: { provider: "anthropic", providerConfig: { anthropic: { apiKey: env("ANTHROPIC_API_KEY") } } }
 ```
 
-**Note**: Anthropic does not provide an embeddings API. If you need RAG with Anthropic as your chat provider, configure a separate embedding provider via `ASKDB_RAG_EMBEDDER` (e.g. `openai`) alongside your Anthropic chat key.
+**Note**: Anthropic does not provide an embeddings API. If you need RAG with Anthropic as your chat provider, configure a separate embedding provider in `ai.embedding` (e.g. `provider: "openai"`) alongside your Anthropic chat key.
 
 ### Vercel AI Gateway
 
@@ -220,21 +220,24 @@ ASKDB_AI_MODEL=anthropic/claude-sonnet-4-6  # optional; default: openai/gpt-4o-m
 ```
 
 ```ts
-ai: { provider: "gateway", providerConfig: { gateway: { apiKey: env("AI_GATEWAY_API_KEY"), model: "anthropic/claude-sonnet-4-6" } } }
+ai: {
+  providerConfig: { gateway: { apiKey: env("AI_GATEWAY_API_KEY") } },
+  language: { model: "anthropic/claude-sonnet-4-6" },
+}
 ```
 
-Gateway model ids are `<upstream>/<model>`; an id without the prefix is rejected, including the RAG embedding model (set `rag.embedderConfig.openai.model` to e.g. `openai/text-embedding-3-small`). Reasoning effort (`ai.reasoning`) uses the upstream's mapping for `openai/`, `google/`, and `anthropic/` models; other upstreams get no reasoning options. Embedding `dimensions` are sent for `openai/` and `google/` models and refused for other upstreams.
+Gateway model ids are `<upstream>/<model>`; an id without the prefix is rejected, including the RAG embedding model (set `ai.embedding.model` to e.g. `openai/text-embedding-3-small`). Reasoning effort (`ai.language.reasoning`) uses the upstream's mapping for `openai/`, `google/`, and `anthropic/` models; other upstreams get no reasoning options. Embedding `dimensions` are sent for `openai/` and `google/` models and refused for other upstreams.
 
 ### Custom provider
 
-For any provider that isn't built in, use a custom string and register an adapter:
+For any provider that isn't built in, key the provider directly in `providerConfig` and specify the model in `language`:
 
 ```ts
 // askdb.config.ts
 ai: {
-  provider: "mistral",
-  providerConfig: { custom: { apiKey: env("MISTRAL_API_KEY"), model: "mistral-large-2" } }
+  providerConfig: { mistral: { apiKey: env("MISTRAL_API_KEY") } },
+  language: { model: "mistral-large-2" },
 }
 ```
 
-The custom branch flattens to the universal `ASKDB_AI_*` env keys that `resolveBaseConfig` honors. This only works end to end when the host registry contains an adapter registered under this provider name, e.g. `createAiRegistry(["openai", mistralAdapter])` — the first-party apps do not include third-party adapters.
+The custom provider branch flattens to the universal `ASKDB_AI_*` env keys that `resolveBaseConfig` honors. This only works end to end when the host registry contains an adapter registered under this provider name, e.g. `createAiRegistry(["openai", mistralAdapter])` — the first-party apps do not include third-party adapters.

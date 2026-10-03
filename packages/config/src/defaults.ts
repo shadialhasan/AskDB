@@ -30,12 +30,30 @@ export const DEFAULT_STUDIO_EXECUTE_MAX_ROWS = 500;
 export const PGVECTOR_INDEX_STRATEGIES = ["ivfflat", "hnsw", "none"] as const;
 export type PgvectorIndexStrategyId = (typeof PGVECTOR_INDEX_STRATEGIES)[number];
 
-/** Same heuristics as Studio / `@askdb/rag` CLI for common OpenAI embedding models. */
-export function defaultRagEmbeddingDimensions(model: string): number {
+/**
+ * Known embedding dimensions for supported first-party models.
+ * Knows the three OpenAI model ids for openai, azure, foundry, and their
+ * `openai/...` forms for gateway. Returns `undefined` for any other model/provider.
+ */
+export function knownEmbeddingDimensions(provider: string, model: string): number | undefined {
+  const p = provider.trim().toLowerCase();
   const m = model.trim();
-  if (m === "text-embedding-3-large") return 3072;
-  if (m === "text-embedding-ada-002") return 1536;
-  return 1536;
+  if (p === "openai" || p === "azure" || p === "foundry") {
+    if (m === "text-embedding-3-small" || m === "text-embedding-ada-002") return 1536;
+    if (m === "text-embedding-3-large") return 3072;
+    return undefined;
+  }
+  if (p === "gateway") {
+    if (m === "openai/text-embedding-3-small" || m === "openai/text-embedding-ada-002") return 1536;
+    if (m === "openai/text-embedding-3-large") return 3072;
+    return undefined;
+  }
+  return undefined;
+}
+
+/** @deprecated Use {@link knownEmbeddingDimensions}. Removed at 1.0. */
+export function defaultRagEmbeddingDimensions(model: string): number {
+  return knownEmbeddingDimensions("openai", model) ?? 1536;
 }
 
 export function parsePositiveInteger(value: string | number | undefined): number | undefined {

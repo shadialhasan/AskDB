@@ -44,7 +44,10 @@ export {
   DEFAULT_STUDIO_EXECUTE_MAX_ROWS,
   DEFAULT_STUDIO_EXECUTE_TIMEOUT_MS,
   defaultRagEmbeddingDimensions,
+  knownEmbeddingDimensions,
 } from "./defaults.js";
+export { normalizeAskDbConfig } from "./normalize.js";
+export type { NormalizedAskDbConfig, NormalizeConfigResult } from "./normalize.js";
 export { defineConfig, isAskDbEnvProjection, ASKDB_ENV_PROJECTION } from "./projection.js";
 export type { AskDbEnvProjection } from "./projection.js";
 export { loadAskDbConfigProjection, loadAskDbConfigProjectionSync } from "./load-merge.js";
@@ -52,6 +55,18 @@ export type {
   AskDbConfig,
   AskDbAiConfig,
   AskDbAiReasoningConfig,
+  AskDbAiLanguageConfig,
+  AskDbAiEmbeddingConfig,
+  AiProviderConnections,
+  NamedConnection,
+  Connections,
+  OpenaiConnection,
+  AzureConnection,
+  FoundryConnection,
+  AnthropicConnection,
+  GoogleConnection,
+  GatewayConnection,
+  CustomConnection,
   OpenaiAiConfig,
   AzureAiConfig,
   FoundryAiConfig,

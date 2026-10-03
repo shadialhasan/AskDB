@@ -18,8 +18,12 @@ export const ASKDB_LOG_LEVELS = [
 ] as const;
 export type AskDbLogLevel = (typeof ASKDB_LOG_LEVELS)[number];
 
-/** RAG embedder modes used by Studio / docs (CLI RAG currently supports mock + openai). */
-export const ASKDB_RAG_EMBEDDERS = ["mock", "openai", "ai-sdk"] as const;
+/**
+ * RAG embedder modes used by Studio / docs (CLI RAG currently supports mock + openai).
+ * "ai" is the canonical provider-portable embedder. "openai" and "ai-sdk" are deprecated
+ * aliases translated to "ai" at config load time.
+ */
+export const ASKDB_RAG_EMBEDDERS = ["mock", "ai", "openai", "ai-sdk"] as const;
 export type AskDbRagEmbedder = (typeof ASKDB_RAG_EMBEDDERS)[number];
 
 export const ASKDB_RAG_STORES = ["file", "memory", "pgvector"] as const;

@@ -31,8 +31,10 @@ export default defineConfig({
     providerConfig: {
       openai: {
         apiKey: env("MY_OPENAI_API_KEY"),
-        model: env("MY_LANGUAGE_MODEL"),
       },
+    },
+    language: {
+      model: env("MY_LANGUAGE_MODEL"),
     },
   },
   database: {
@@ -46,7 +48,6 @@ export default defineConfig({
   },
   rag: {
     embedder: "mock",
-    embedderConfig: {},
     store: "memory",
     storeConfig: { memory: {} },
   },

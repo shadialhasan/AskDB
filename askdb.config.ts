@@ -12,8 +12,15 @@ export default defineConfig({
       openai: {
         // Live NL→SQL: set in `.env`, e.g. OPENAI_API_KEY=… (optional OPENAI_BASE_URL=…)
         apiKey: env("OPENAI_API_KEY"),
-        model: env("OPENAI_MODEL"),
       },
+    },
+    language: {
+      model: env("OPENAI_MODEL"),
+    },
+    embedding: {
+      // RAG embeddings: configure model and dimensions here
+      model: env("ASKDB_RAG_EMBEDDER_MODEL") ?? "text-embedding-3-small",
+      dimensions: env("ASKDB_RAG_EMBEDDER_DIMENSIONS"),
     },
   },
 
@@ -32,16 +39,8 @@ export default defineConfig({
   },
 
   rag: {
-    // mock | openai | ai-sdk — optional: MY_RAG_EMBEDDER in `.env`
-    embedder: "openai",
-    embedderConfig: {
-      openai: {
-        model: env("ASKDB_RAG_EMBEDDER_MODEL"),
-        dimension: env("ASKDB_RAG_EMBEDDER_DIMENSIONS"),
-        apiKey: env("OPENAI_API_KEY"),
-        baseUrl: env("ASKDB_RAG_EMBEDDER_BASE_URL"),
-      },
-    },
+    // mock | ai — optional: MY_RAG_EMBEDDER in `.env`
+    embedder: "ai",
     // file | memory | pgvector — optional: ASKDB_PGVECTOR_URL for pgvector (e.g. port 5434 fixture)
     store: "file",
     storeConfig: {
@@ -49,7 +48,7 @@ export default defineConfig({
       memory: {},
       pgvector: {
         databaseUrl: env("ASKDB_PGVECTOR_URL"),
-        dimensions: env("ASKDB_RAG_EMBEDDER_DIMENSIONS"),
+        // dimensions configured under ai.embedding.dimensions
       },
     },
   },

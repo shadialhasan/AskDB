@@ -91,9 +91,16 @@ export function bootstrapAskDbEnv(options: BootstrapAskDbEnvOptions = {}): {
     );
   }
 
+  if (projection.deprecations && projection.deprecations.length > 0) {
+    for (const dep of projection.deprecations) {
+      process.emitWarning(dep, { type: "DeprecationWarning", code: "ASKDB_CONFIG_DEPRECATED" });
+    }
+  }
+
   setAskDbRuntime({
     structured: projection.config,
     flat: { ...projection.entries },
+    deprecations: projection.deprecations,
   });
 
   return { dotenvPath, configPath };

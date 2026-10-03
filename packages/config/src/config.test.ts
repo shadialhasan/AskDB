@@ -12,6 +12,7 @@ import {
   flattenAskDbConfig,
   getAskDbRuntimeConfig,
   loadAskDbConfigProjectionSync,
+  normalizeAskDbConfig,
   requiredEnv,
   resetAskDbRuntimeForTests,
   setAskDbRuntimeForTests,
@@ -967,5 +968,449 @@ describe("bootstrapAskDbEnv", () => {
     expect(rt.ai.aiEnv.ASKDB_INTROSPECT_POSTGRES_URL).toBe("postgres://localhost/db");
     delete process.env.MY_AI;
     delete process.env.MY_DB;
+  });
+});
+
+describe("regressions: AI config restructuring and key leak prevention (#435, #345)", () => {
+  afterEach(() => resetAskDbRuntimeForTests());
+
+  it("regression 1: google ai.provider + ai-sdk embedder + openai embedderConfig apiKey throws T7", () => {
+    const config = {
+      ai: { provider: "google", providerConfig: { google: { apiKey: "google-key" } } },
+      introspection: { provider: "postgres", providerConfig: { postgres: { databaseUrl: "postgres://localhost/db" } }, outputDir: "./askdb/" },
+      rag: {
+        embedder: "ai-sdk",
+        embedderConfig: { openai: { apiKey: "openai-leak-key" } },
+        store: "memory",
+        storeConfig: { memory: {} },
+      },
+    };
+    expect(() => flattenAskDbConfig(config as any)).toThrow();
+  });
+
+  it("regression 2: anthropic ai.provider + openai connection + ai.embedding + rag.embedder 'ai' isolates keys", () => {
+    const configWithoutEmbedding = {
+      ai: {
+        provider: "anthropic",
+        providerConfig: {
+          anthropic: { apiKey: "anthropic-key" },
+          openai: { apiKey: "openai-embed-key" },
+        },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: { databaseUrl: "postgres://localhost/db" } }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    };
+    const flatBase = flattenAskDbConfig(configWithoutEmbedding as any);
+
+    const configWithEmbedding = {
+      ai: {
+        provider: "anthropic",
+        providerConfig: {
+          anthropic: { apiKey: "anthropic-key" },
+          openai: { apiKey: "openai-embed-key" },
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: { databaseUrl: "postgres://localhost/db" } }, outputDir: "./askdb/" },
+      rag: { embedder: "ai", store: "memory", storeConfig: { memory: {} } },
+    };
+    const flat = flattenAskDbConfig(configWithEmbedding as any);
+    setAskDbRuntimeForTests({ structured: configWithEmbedding as any, flat });
+    const rt = getAskDbRuntimeConfig();
+
+    expect(rt.ai.aiEnv.ANTHROPIC_API_KEY).toBe(flatBase.ANTHROPIC_API_KEY);
+    expect(rt.ai.aiEnv.OPENAI_API_KEY).toBeUndefined();
+    expect((rt.ai as any).embedding?.env.OPENAI_API_KEY).toBe("openai-embed-key");
+    expect((rt.ai as any).embedding?.env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it("regression 3: custom ai.provider with providerConfig.custom.apiKey and no RAG key leaves rt.rag.embedder.apiKey undefined", () => {
+    const config = {
+      ai: {
+        provider: "my-custom-llm",
+        providerConfig: {
+          custom: { apiKey: "custom-secret-key" },
+        },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: { databaseUrl: "postgres://localhost/db" } }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    };
+    const flat = flattenAskDbConfig(config as any);
+    setAskDbRuntimeForTests({ structured: config as any, flat });
+    const rt = getAskDbRuntimeConfig();
+    expect(rt.rag.embedder.apiKey).toBeUndefined();
+  });
+});
+
+describe("compatibility and architecture verification (Step 5)", () => {
+  afterEach(() => resetAskDbRuntimeForTests());
+
+  it("1. legacy configs produce identical language-side flat keys to main", () => {
+    const legacyOpenai = {
+      ai: { provider: "openai", providerConfig: { openai: { apiKey: "k-op", baseUrl: "https://op.test", model: "custom-gpt" } } },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    } satisfies AskDbConfig;
+    const flatOpenai = flattenAskDbConfig(legacyOpenai);
+    expect(flatOpenai.ASKDB_AI_PROVIDER).toBe("openai");
+    expect(flatOpenai.OPENAI_API_KEY).toBe("k-op");
+    expect(flatOpenai.OPENAI_BASE_URL).toBe("https://op.test");
+    expect(flatOpenai.OPENAI_MODEL).toBe("custom-gpt");
+    expect(flatOpenai.ASKDB_MODEL).toBe("custom-gpt");
+
+    const legacyAzure = {
+      ai: {
+        provider: "azure",
+        providerConfig: {
+          azure: { apiKey: "k-az", secondaryApiKey: "k-az-sec", resourceName: "res-az", model: "dep-1", modelFamily: "o3-mini" },
+        },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    } satisfies AskDbConfig;
+    const flatAzure = flattenAskDbConfig(legacyAzure);
+    expect(flatAzure.ASKDB_AI_PROVIDER).toBe("azure");
+    expect(flatAzure.AZURE_OPENAI_API_KEY).toBe("k-az");
+    expect(flatAzure.AZURE_OPENAI_API_KEY_SECONDARY).toBe("k-az-sec");
+    expect(flatAzure.ASKDB_AI_AZURE_RESOURCE_NAME).toBe("res-az");
+    expect(flatAzure.AZURE_OPENAI_DEPLOYMENT).toBe("dep-1");
+    expect(flatAzure.AZURE_DEPLOYMENT_NAME).toBe("dep-1");
+    expect(flatAzure.ASKDB_AI_MODEL).toBe("dep-1");
+    expect(flatAzure.ASKDB_AI_AZURE_MODEL_FAMILY).toBe("o3-mini");
+
+    const legacyFoundry = {
+      ai: {
+        provider: "foundry",
+        providerConfig: {
+          foundry: { apiKey: "k-fn", resourceName: "res-fn", model: "fn-dep" },
+        },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    } satisfies AskDbConfig;
+    const flatFoundry = flattenAskDbConfig(legacyFoundry);
+    expect(flatFoundry.ASKDB_AI_PROVIDER).toBe("foundry");
+    expect(flatFoundry.AZURE_OPENAI_API_KEY).toBe("k-fn");
+    expect(flatFoundry.ASKDB_AI_AZURE_RESOURCE_NAME).toBe("res-fn");
+    expect(flatFoundry.AZURE_OPENAI_DEPLOYMENT).toBe("fn-dep");
+
+    const legacyAnthropic = {
+      ai: {
+        provider: "anthropic",
+        providerConfig: {
+          anthropic: { apiKey: "k-ant", baseUrl: "https://ant.test", model: "claude-3-opus" },
+        },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    } satisfies AskDbConfig;
+    const flatAnthropic = flattenAskDbConfig(legacyAnthropic);
+    expect(flatAnthropic.ASKDB_AI_PROVIDER).toBe("anthropic");
+    expect(flatAnthropic.ANTHROPIC_API_KEY).toBe("k-ant");
+    expect(flatAnthropic.ANTHROPIC_BASE_URL).toBe("https://ant.test");
+    expect(flatAnthropic.ASKDB_AI_MODEL).toBe("claude-3-opus");
+
+    const legacyGoogle = {
+      ai: {
+        provider: "google",
+        providerConfig: {
+          google: { apiKey: "k-goog", baseUrl: "https://goog.test", model: "gemini-pro" },
+        },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    } satisfies AskDbConfig;
+    const flatGoogle = flattenAskDbConfig(legacyGoogle);
+    expect(flatGoogle.ASKDB_AI_PROVIDER).toBe("google");
+    expect(flatGoogle.GOOGLE_GENERATIVE_AI_API_KEY).toBe("k-goog");
+    expect(flatGoogle.GOOGLE_AI_BASE_URL).toBe("https://goog.test");
+    expect(flatGoogle.ASKDB_AI_MODEL).toBe("gemini-pro");
+
+    const legacyGateway = {
+      ai: {
+        provider: "gateway",
+        providerConfig: {
+          gateway: { apiKey: "k-gw", baseUrl: "https://gw.test", model: "anthropic/claude-3-sonnet" },
+        },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    } satisfies AskDbConfig;
+    const flatGateway = flattenAskDbConfig(legacyGateway);
+    expect(flatGateway.ASKDB_AI_PROVIDER).toBe("gateway");
+    expect(flatGateway.AI_GATEWAY_API_KEY).toBe("k-gw");
+    expect(flatGateway.ASKDB_AI_BASE_URL).toBe("https://gw.test");
+    expect(flatGateway.ASKDB_AI_MODEL).toBe("anthropic/claude-3-sonnet");
+
+    const legacyCustom = {
+      ai: {
+        provider: "my-llm",
+        providerConfig: {
+          custom: { apiKey: "k-cust", baseUrl: "https://cust.test", model: "cust-model" },
+        },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    } satisfies AskDbConfig;
+    const flatCustom = flattenAskDbConfig(legacyCustom);
+    expect(flatCustom.ASKDB_AI_PROVIDER).toBe("my-llm");
+    expect(flatCustom.ASKDB_AI_API_KEY).toBe("k-cust");
+    expect(flatCustom.ASKDB_AI_BASE_URL).toBe("https://cust.test");
+    expect(flatCustom.ASKDB_AI_MODEL).toBe("cust-model");
+
+    const legacyReasoning = {
+      ai: {
+        provider: "openai",
+        providerConfig: { openai: { apiKey: "k" } },
+        reasoning: { effort: "low", nlToSql: "medium", enrichment: "minimal" },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+    } satisfies AskDbConfig;
+    const flatReasoning = flattenAskDbConfig(legacyReasoning);
+    expect(flatReasoning.ASKDB_AI_REASONING_EFFORT).toBe("low");
+    expect(flatReasoning.ASKDB_AI_REASONING_EFFORT_NL_TO_SQL).toBe("medium");
+    expect(flatReasoning.ASKDB_AI_REASONING_EFFORT_ENRICHMENT).toBe("minimal");
+  });
+
+  it("2. embedder: 'openai' translation: same key vs different key", () => {
+    // Same key -> no new connection
+    const sameKeyConfig = {
+      ai: { provider: "openai", providerConfig: { openai: { apiKey: "key-shared" } } },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "openai" as const, embedderConfig: { openai: { apiKey: "key-shared" } }, store: "memory" as const, storeConfig: { memory: {} } },
+    };
+    const { config: normSame } = normalizeAskDbConfig(sameKeyConfig as any);
+    expect(normSame.ai.embedding?.connection).toBe("default");
+    expect(normSame.ai.providerConfig.openai).toHaveLength(1);
+
+    // Different key -> rag-embeddings connection
+    const diffKeyConfig = {
+      ai: { provider: "openai", providerConfig: { openai: { apiKey: "key-chat" } } },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "openai" as const, embedderConfig: { openai: { apiKey: "key-embed" } }, store: "memory" as const, storeConfig: { memory: {} } },
+    };
+    const { config: normDiff } = normalizeAskDbConfig(diffKeyConfig as any);
+    expect(normDiff.ai.embedding?.connection).toBe("rag-embeddings");
+    expect(normDiff.ai.providerConfig.openai).toHaveLength(2);
+    expect(normDiff.ai.providerConfig.openai.find((c) => c.name === "rag-embeddings")?.apiKey).toBe("key-embed");
+  });
+
+  it("3. Azure with two connections (the Design example)", () => {
+    const twoConnConfig = {
+      ai: {
+        provider: "anthropic",
+        providerConfig: {
+          anthropic: { apiKey: "ant-key" },
+          azure: [
+            { resourceName: "eastus-chat", apiKey: "eastus-key" },
+            { name: "westus", resourceName: "westus-embed", apiKey: "westus-key" },
+          ],
+        },
+        language: { model: "claude-sonnet-4-6" },
+        embedding: {
+          provider: "azure",
+          connection: "westus",
+          model: "text-embedding-3-small",
+          dimensions: 1536,
+        },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "ai", store: "memory", storeConfig: { memory: {} } },
+    } satisfies AskDbConfig;
+
+    const flat = flattenAskDbConfig(twoConnConfig);
+    setAskDbRuntimeForTests({ structured: twoConnConfig, flat });
+    const rt = getAskDbRuntimeConfig();
+
+    expect(rt.ai.language.provider).toBe("anthropic");
+    expect(rt.ai.language.env.ANTHROPIC_API_KEY).toBe("ant-key");
+    expect(rt.ai.embedding?.provider).toBe("azure");
+    expect(rt.ai.embedding?.connection).toBe("westus");
+    expect(rt.ai.embedding?.env.ASKDB_AI_AZURE_RESOURCE_NAME).toBe("westus-embed");
+    expect(rt.ai.embedding?.env.AZURE_OPENAI_API_KEY).toBe("westus-key");
+    expect(rt.ai.embedding?.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(rt.ai.embedding?.env.ASKDB_AI_PROVIDER).toBe("azure");
+  });
+
+  it("4. Gateway with legacy .openai.model: 'openai/text-embedding-3-small' translates", () => {
+    const gwConfig = {
+      ai: { provider: "gateway", providerConfig: { gateway: { apiKey: "gw-key" } } },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: {
+        embedder: "ai-sdk" as const,
+        embedderConfig: { openai: { model: "openai/text-embedding-3-small" } },
+        store: "memory" as const,
+        storeConfig: { memory: {} },
+      },
+    };
+    const { config: norm } = normalizeAskDbConfig(gwConfig as any);
+    expect(norm.rag.embedder).toBe("ai");
+    expect(norm.ai.embedding?.provider).toBe("gateway");
+    expect(norm.ai.embedding?.model).toBe("openai/text-embedding-3-small");
+    expect(norm.ai.embedding?.dimensions).toBe(1536);
+  });
+
+  it("5. validates error conditions", () => {
+    // Duplicate connection names
+    expect(() =>
+      normalizeAskDbConfig({
+        ai: {
+          provider: "openai",
+          providerConfig: {
+            openai: [
+              { name: "default", apiKey: "k1" },
+              { name: "default", apiKey: "k2" },
+            ],
+          },
+        },
+        introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+        rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+      } as any),
+    ).toThrow(/duplicate connection name/);
+
+    // Unknown connection
+    expect(() =>
+      normalizeAskDbConfig({
+        ai: {
+          provider: "openai",
+          providerConfig: { openai: { apiKey: "k" } },
+          language: { connection: "non-existent" },
+        },
+        introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+        rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+      } as any),
+    ).toThrow(/connection "non-existent" not found/);
+
+    // Missing default connection on a built-in provider
+    expect(() =>
+      normalizeAskDbConfig({
+        ai: { provider: "openai" },
+        introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+        rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+      } as any),
+    ).toThrow(/ai\.providerConfig\.openai is required/);
+
+    // Anthropic embedding provider
+    expect(() =>
+      normalizeAskDbConfig({
+        ai: {
+          provider: "anthropic",
+          providerConfig: { anthropic: { apiKey: "k" } },
+          embedding: { provider: "anthropic", model: "claude-embed" },
+        },
+        introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+        rag: { embedder: "ai", store: "memory", storeConfig: { memory: {} } },
+      } as any),
+    ).toThrow(/anthropic has no embeddings API/);
+
+    // "ai" without a model
+    expect(() =>
+      normalizeAskDbConfig({
+        ai: {
+          provider: "openai",
+          providerConfig: { openai: { apiKey: "k" } },
+          embedding: { provider: "openai", model: "" },
+        },
+        introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+        rag: { embedder: "ai", store: "memory", storeConfig: { memory: {} } },
+      } as any),
+    ).toThrow(/rag\.embedder is "ai" but ai\.embedding\.model is not set/);
+
+    // pgvector with unknown dimensions
+    expect(() =>
+      normalizeAskDbConfig({
+        ai: {
+          provider: "google",
+          providerConfig: { google: { apiKey: "k" } },
+          embedding: { provider: "google", model: "custom-gemini-embed" },
+        },
+        introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+        rag: { embedder: "ai", store: "pgvector", storeConfig: { pgvector: { databaseUrl: "postgres://x" } } },
+      } as any),
+    ).toThrow(/set ai\.embedding\.dimensions for embedding model/);
+
+    // conflicting pgvector dimensions
+    expect(() =>
+      normalizeAskDbConfig({
+        ai: {
+          provider: "openai",
+          providerConfig: { openai: { apiKey: "k" } },
+          embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536 },
+        },
+        introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+        rag: { embedder: "ai", store: "pgvector", storeConfig: { pgvector: { databaseUrl: "postgres://x", dimensions: 768 } } },
+      } as any),
+    ).toThrow(/conflicting dimensions/);
+
+    // ai.reasoning plus language.reasoning
+    expect(() =>
+      normalizeAskDbConfig({
+        ai: {
+          provider: "openai",
+          providerConfig: { openai: { apiKey: "k" } },
+          reasoning: { effort: "low" },
+          language: { reasoning: { effort: "high" } },
+        },
+        introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+        rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
+      } as any),
+    ).toThrow(/both ai\.language\.reasoning and legacy ai\.reasoning are configured/);
+  });
+
+  it("6. deprecation messages name legacy keys and contain no secret values", () => {
+    const secretKey = "super-secret-key-12345";
+    const { deprecations } = normalizeAskDbConfig({
+      ai: {
+        provider: "openai",
+        providerConfig: { openai: { apiKey: secretKey, model: "gpt-4o-mini" } },
+        reasoning: { effort: "low" },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: { embedder: "openai" as any, embedderConfig: { openai: { apiKey: secretKey } }, store: "memory", storeConfig: { memory: {} } },
+    } as any);
+
+    expect(deprecations.length).toBeGreaterThan(0);
+    for (const msg of deprecations) {
+      expect(msg).not.toContain(secretKey);
+    }
+    expect(deprecations.some((m) => m.includes("providerConfig.openai.model"))).toBe(true);
+    expect(deprecations.some((m) => m.includes("ai.reasoning"))).toBe(true);
+    expect(deprecations.some((m) => m.includes('rag.embedder: "openai"'))).toBe(true);
+  });
+
+  it("7. type check: legacy-shape and new-shape literals satisfies AskDbConfig", () => {
+    const legacyLiteral = {
+      ai: {
+        provider: "openai",
+        providerConfig: { openai: { apiKey: "k", model: "gpt-4o-mini" } },
+        reasoning: { effort: "low" },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: {
+        embedder: "mock",
+        embedderConfig: {},
+        store: "memory",
+        storeConfig: { memory: {} },
+      },
+    } satisfies AskDbConfig;
+
+    const newLiteral = {
+      ai: {
+        provider: "openai",
+        providerConfig: { openai: { apiKey: "k" } },
+        language: { model: "gpt-4o-mini", reasoning: { effort: "low" } },
+        embedding: { model: "text-embedding-3-small", dimensions: 1536 },
+      },
+      introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
+      rag: {
+        embedder: "ai",
+        store: "memory",
+        storeConfig: { memory: {} },
+      },
+    } satisfies AskDbConfig;
+
+    expect(legacyLiteral.ai.provider).toBe("openai");
+    expect(newLiteral.ai.provider).toBe("openai");
   });
 });

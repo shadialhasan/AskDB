@@ -48,10 +48,6 @@ export function renderAskDbAiConfigScaffold(input: AskDbAiConfigScaffoldInput): 
   }
   const envVars: AskDbScaffoldEnvVar[] = [{ name: keyEnv, purpose: `${provider} API key` }];
   const fields = [`apiKey: env(${JSON.stringify(keyEnv)}),`];
-  if (modelEnv) {
-    envVars.push({ name: modelEnv, purpose: `${provider} model override` });
-    fields.push(`model: env(${JSON.stringify(modelEnv)}),`);
-  }
   // `AzureConfig` / `FoundryConfig` need `resourceName` or `baseUrl`; the
   // adapter refuses to start without one. Scaffold the resource-name form.
   if (provider === "azure" || provider === "foundry") {
@@ -61,13 +57,19 @@ export function renderAskDbAiConfigScaffold(input: AskDbAiConfigScaffoldInput): 
     });
     fields.push(`resourceName: env(${JSON.stringify(AZURE_RESOURCE_NAME_ENV)}),`);
   }
+  const languageBlock = modelEnv
+    ? `\n    language: {\n      model: env(${JSON.stringify(modelEnv)}),\n    },`
+    : "";
+  if (modelEnv) {
+    envVars.push({ name: modelEnv, purpose: `${provider} model override` });
+  }
   const source = `  ai: {
     provider: ${JSON.stringify(provider)},
     providerConfig: {
       ${provider}: {
 ${fields.map((field) => `        ${field}`).join("\n")}
       },
-    },
+    },${languageBlock}
   },`;
   return { source, envVars };
 }

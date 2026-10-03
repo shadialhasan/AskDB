@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveBaseConfig, type AiProviderAdapter, type ProviderEnvSpec } from "./provider.js";
+import {
+  resolveBaseConfig,
+  resetWarnedDefaultEmbeddingModelForTests,
+  type AiProviderAdapter,
+  type ProviderEnvSpec,
+} from "./provider.js";
 import { aiKeyMissingMessage, aiProviderMissingMessage, createAiRegistry } from "./registry.js";
 
 const spec: ProviderEnvSpec = {
@@ -526,6 +531,49 @@ describe("createAiRegistry", () => {
           { reasoningEffort: "low" },
         ),
       ).toBeUndefined();
+    });
+  });
+
+  describe("defaultEmbeddingModel deprecation warning", () => {
+    it("emits warning once when defaultEmbeddingModel is used and not when model is set", () => {
+      const emitWarningSpy = vi.spyOn(process, "emitWarning");
+      resetWarnedDefaultEmbeddingModelForTests();
+
+      try {
+        // 1. With explicit model: no warning
+        resolveBaseConfig(
+          "openai",
+          { OPENAI_API_KEY: "k", ASKDB_AI_EMBEDDING_MODEL: "text-embedding-3-small" },
+          { apiKeyVars: ["OPENAI_API_KEY"], defaultEmbeddingModel: "fallback-model" },
+          { usage: "embedding" },
+        );
+        expect(emitWarningSpy).not.toHaveBeenCalled();
+
+        // 2. Without explicit model: warning emitted once
+        resolveBaseConfig(
+          "openai",
+          { OPENAI_API_KEY: "k" },
+          { apiKeyVars: ["OPENAI_API_KEY"], defaultEmbeddingModel: "fallback-model" },
+          { usage: "embedding" },
+        );
+        expect(emitWarningSpy).toHaveBeenCalledTimes(1);
+        expect(emitWarningSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Default embedding model"),
+          expect.objectContaining({ code: "ASKDB_AI_DEFAULT_EMBEDDING_MODEL" }),
+        );
+
+        // 3. Called second time: warning NOT emitted again (once per process)
+        resolveBaseConfig(
+          "openai",
+          { OPENAI_API_KEY: "k" },
+          { apiKeyVars: ["OPENAI_API_KEY"], defaultEmbeddingModel: "fallback-model" },
+          { usage: "embedding" },
+        );
+        expect(emitWarningSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        emitWarningSpy.mockRestore();
+        resetWarnedDefaultEmbeddingModelForTests();
+      }
     });
   });
 });

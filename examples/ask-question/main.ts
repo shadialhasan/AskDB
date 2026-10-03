@@ -124,11 +124,10 @@ async function main(): Promise<void> {
   //
   // For larger schemas (many tables / columns), build a vector index and pass
   // a retriever so only the relevant schema chunks are sent to the model.
-  // createEmbeddingModelFromEnv uses the same config but defaults to the
-  // embedding model (text-embedding-3-small) rather than the language model.
-  const embeddingModel = await ai.createEmbeddingModelFromEnv(
-    runtimeConfig.ai.aiEnv,
-  );
+  // createEmbeddingModelFromEnv uses the dedicated embedding section's isolated environment.
+  const embeddingModel = runtimeConfig.ai.embedding
+    ? await ai.createEmbeddingModelFromEnv(runtimeConfig.ai.embedding.env)
+    : undefined;
 
   if (!embeddingModel) {
     console.log("\nSkipping RAG path — no embedding key configured.");

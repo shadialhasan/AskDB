@@ -166,6 +166,7 @@ type StudioRagEmbedderConfig =
   | {
       kind: "ai-sdk";
       provider: AiProvider;
+      connection?: string;
       embedderId: string;
       dimensions: number;
       configured: boolean;
@@ -201,7 +202,6 @@ type StudioTokenUsageInput = {
 
 const STUDIO_RAG_MOCK_DIMENSIONS = 64;
 const STUDIO_RAG_MOCK_EMBEDDER_ID = `studio:mock-lexical-${STUDIO_RAG_MOCK_DIMENSIONS}`;
-const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 let studioPgvectorStoreFactoryForTests: typeof createPgvectorStore | undefined;
 
 export function setStudioPgvectorStoreFactoryForTests(
@@ -403,8 +403,8 @@ export function serializeWorkspace(workspace: Workspace): StudioWorkspaceDto {
     dialect,
     warnings: workspace.warnings,
     aiConfigured: Boolean(aiConfig),
-    model: aiConfig?.model ?? "gpt-4o-mini",
-    aiProvider: aiConfig?.provider ?? "openai",
+    model: rt.ai.language?.model ?? aiConfig?.model ?? "",
+    aiProvider: aiConfig?.provider ?? rt.ai.language?.provider ?? "openai",
     tables: workspace.tables.map((table) => {
       const draft = buildTableDraft(table.physical, table.parsed);
       return {
@@ -1177,10 +1177,13 @@ function pickEnv(env: AiEnv, key: string): string | undefined {
 
 function resolveStudioRagEmbedderConfig(): StudioRagEmbedderConfig {
   const rt = getAskDbRuntimeConfig();
-  const base = rt.ai.aiEnv;
-  const explicitKind = pickEnv(base, "ASKDB_RAG_EMBEDDER");
-  const kind = explicitKind?.toLowerCase();
-  if (kind === "mock") {
+  const embedderKind = (
+    pickEnv(rt.ai.aiEnv, "ASKDB_RAG_EMBEDDER") ??
+    rt.structured.rag.embedder ??
+    "mock"
+  ).toLowerCase();
+
+  if (embedderKind === "mock") {
     return {
       kind: "mock",
       embedderId: STUDIO_RAG_MOCK_EMBEDDER_ID,
@@ -1189,60 +1192,32 @@ function resolveStudioRagEmbedderConfig(): StudioRagEmbedderConfig {
       label: "Mock lexical",
     };
   }
-  if (kind !== undefined && kind !== "ai-sdk" && kind !== "openai") {
-    throw new StudioHttpError(400, `Unsupported Studio RAG embedder: ${kind}`);
+  if (embedderKind !== "ai") {
+    throw new StudioHttpError(400, `Unsupported Studio RAG embedder: ${embedderKind}`);
   }
 
-  const env = buildStudioRagEmbeddingEnv(kind, base);
-  const aiConfig = ai.resolveEmbeddingConfig(env, {
-    modelEnvVar: "ASKDB_RAG_EMBEDDER_MODEL",
-    modelDefault: DEFAULT_EMBEDDING_MODEL,
-  });
-  if (!aiConfig && kind === undefined) {
-    return {
-      kind: "mock",
-      embedderId: STUDIO_RAG_MOCK_EMBEDDER_ID,
-      dimensions: STUDIO_RAG_MOCK_DIMENSIONS,
-      configured: true,
-      label: "Mock lexical",
-    };
-  }
+  const embedding = rt.ai.embedding;
+  const aiConfig = embedding ? ai.resolveEmbeddingConfig(embedding.env) : undefined;
+  const provider = (aiConfig?.provider ?? (embedding?.provider === "foundry" ? "azure" : embedding?.provider ?? "openai")) as AiProvider;
+  const model = aiConfig?.model ?? embedding?.model ?? "";
+  const connection = embedding?.connection ?? "default";
+  const dims = embedding?.dimensions;
+  const embedderId = `ai-sdk:${provider}:${model}:${dims ?? "default"}`;
+  const dimensions = dims ?? 0;
 
-  const provider = aiConfig?.provider ?? fallbackStudioRagProvider(kind, base);
-  const model = aiConfig?.model ?? DEFAULT_EMBEDDING_MODEL;
-  const dimensionOverride = readPositiveIntegerEnv(pickEnv(base, "ASKDB_RAG_EMBEDDER_DIMENSIONS"));
-  const dimensions = dimensionOverride ?? defaultEmbeddingDimensions(model);
   return {
     kind: "ai-sdk",
     provider,
-    embedderId: `ai-sdk:${provider}:${model}:${dimensions}`,
+    connection,
+    embedderId,
     dimensions,
     configured: Boolean(aiConfig),
     label: `AI SDK (${provider})`,
     model,
     baseUrl: aiConfig?.baseURL,
     aiConfig,
-    requestDimensions: dimensionOverride,
+    requestDimensions: embedding?.requestDimensions,
   };
-}
-
-function buildStudioRagEmbeddingEnv(kind: string | undefined, base: AiEnv): AiEnv {
-  const apiKeyOverride = pickEnv(base, "ASKDB_RAG_EMBEDDER_API_KEY");
-  const baseUrlOverride = pickEnv(base, "ASKDB_RAG_EMBEDDER_BASE_URL");
-  return {
-    ...base,
-    ...(kind === "openai" ? { ASKDB_AI_PROVIDER: "openai" } : {}),
-    ...(apiKeyOverride ? { ASKDB_AI_API_KEY: apiKeyOverride } : {}),
-    ...(baseUrlOverride ? { ASKDB_AI_BASE_URL: baseUrlOverride } : {}),
-  };
-}
-
-function fallbackStudioRagProvider(kind: string | undefined, base: AiEnv): AiProvider {
-  if (kind === "openai") return "openai";
-  const raw = (pickEnv(base, "ASKDB_AI_PROVIDER") ?? "").toLowerCase();
-  return raw === "azure" || raw === "azure-openai" || raw === "foundry"
-    ? "azure"
-    : "openai";
 }
 
 function studioRagAiSdkKeyMissingMessage(): string {
@@ -1290,7 +1265,7 @@ function formatStudioRagOperationError(
     return new StudioHttpError(500, error instanceof Error ? error.message : String(error));
   }
   const parts = [
-    `Studio RAG embedding request failed for provider ${config.provider}, model ${config.model}.`,
+    `Studio RAG embedding request failed for ai.embedding, provider ${config.provider}, connection ${config.connection ?? "default"}, model ${config.model}.`,
   ];
   if (config.baseUrl) parts.push(`Base URL: ${config.baseUrl}.`);
   if (apiError?.statusCode) parts.push(`Status: ${apiError.statusCode}.`);
@@ -1343,20 +1318,6 @@ function clearIncompatibleRagStore(state: StudioState, config: StudioRagEmbedder
   ]) {
     rmSync(path, { force: true });
   }
-}
-
-function defaultEmbeddingDimensions(model: string): number {
-  if (model === "text-embedding-3-large") return 3072;
-  return 1536;
-}
-
-function readPositiveIntegerEnv(value: string | undefined): number | undefined {
-  if (value === undefined || value.trim() === "") return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new StudioHttpError(400, `Invalid Studio RAG embedding dimensions: ${value}`);
-  }
-  return parsed;
 }
 
 function serializeRagResult(result: QueryResult): StudioRagChunkDto {

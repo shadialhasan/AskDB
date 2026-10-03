@@ -3,6 +3,7 @@ import { createServer, request as httpRequest, type IncomingMessage, type Server
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { azureProvider } from "@askdb/ai";
 import {
   flattenAskDbConfig,
@@ -21,7 +22,7 @@ import {
 } from "./server.js";
 import { setSetupInstallerForTests } from "./setup.js";
 
-const repoRoot = new URL("../../..", import.meta.url).pathname;
+const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const BetterSqlite3 = createRequire(import.meta.url)("better-sqlite3") as typeof import("better-sqlite3");
 
 const STUDIO_TEST_BASE: AskDbConfig = {
@@ -188,7 +189,7 @@ describe("AskDB Studio server", () => {
     const ordersMd = join(schemaDir, "tables", "orders.md");
     writeFileSync(
       ordersMd,
-      readFileSync(ordersMd, "utf8").replace("columns:\n", `columns:\n  - id: ${createdAtId}\n    sensitive: true\n`),
+      readFileSync(ordersMd, "utf8").replace(/columns:\r?\n/, `columns:\n  - id: ${createdAtId}\n    sensitive: true\n`),
     );
     const server = createStudioServer({ schema: schemaDir });
     servers.push(server);
@@ -367,12 +368,31 @@ describe("AskDB Studio server", () => {
     const embeddingServer = createEmbeddingServer();
     embeddingServers.push(embeddingServer);
     const embeddingBaseUrl = await listen(embeddingServer);
-    installStudioRuntime({
-      ASKDB_RAG_EMBEDDER: "openai",
-      ASKDB_RAG_EMBEDDER_DIMENSIONS: "4",
-      OPENAI_API_KEY: "test-key",
-      OPENAI_BASE_URL: embeddingBaseUrl,
-    });
+    installStudioRuntime(
+      {},
+      {
+        ...STUDIO_TEST_BASE,
+        ai: {
+          provider: "openai",
+          providerConfig: {
+            openai: {
+              apiKey: "test-key",
+              baseUrl: embeddingBaseUrl,
+            },
+          },
+          language: { model: "gpt-4o-mini" },
+          embedding: {
+            model: "text-embedding-3-small",
+            dimensions: 4,
+          },
+        },
+        rag: {
+          embedder: "ai",
+          store: "memory",
+          storeConfig: { memory: {} },
+        },
+      },
+    );
 
     const schemaDir = copyFixture();
     const server = createStudioServer({ schema: schemaDir });
@@ -404,13 +424,26 @@ describe("AskDB Studio server", () => {
 
   it("defaults Studio RAG to AI SDK embeddings when an AI key is configured", async () => {
     installStudioRuntime(
+      {},
       {
-        ASKDB_AI_PROVIDER: "openai",
-        ASKDB_AI_API_KEY: "test-key",
-        ASKDB_RAG_EMBEDDER_DIMENSIONS: "4",
+        ...STUDIO_TEST_BASE,
+        ai: {
+          provider: "openai",
+          providerConfig: {
+            openai: { apiKey: "test-key" },
+          },
+          language: { model: "gpt-4o-mini" },
+          embedding: {
+            model: "text-embedding-3-small",
+            dimensions: 4,
+          },
+        },
+        rag: {
+          embedder: "ai",
+          store: "memory",
+          storeConfig: { memory: {} },
+        },
       },
-      STUDIO_TEST_BASE,
-      { omitFlatKeys: ["ASKDB_RAG_EMBEDDER"] },
     );
 
     const schemaDir = copyFixture();
@@ -435,21 +468,21 @@ describe("AskDB Studio server", () => {
           azure: {
             apiKey: "test-key",
             baseUrl: "https://example.test/openai/v1",
-            model: "embedding-deployment",
           },
         },
+        language: { model: "gpt-4o-mini" },
+        embedding: {
+          model: "embedding-deployment",
+          dimensions: 4,
+        },
+      },
+      rag: {
+        embedder: "ai",
+        store: "memory",
+        storeConfig: { memory: {} },
       },
     };
-    installStudioRuntime(
-      {
-        ASKDB_RAG_EMBEDDER_DIMENSIONS: "4",
-        AZURE_OPENAI_EMBEDDING_DEPLOYMENT: "embedding-deployment",
-      },
-      azureStructured,
-      {
-        omitFlatKeys: ["ASKDB_RAG_EMBEDDER"],
-      },
-    );
+    installStudioRuntime({}, azureStructured);
 
     const schemaDir = copyFixture();
     const server = createStudioServer({ schema: schemaDir });
@@ -464,16 +497,66 @@ describe("AskDB Studio server", () => {
     expect(status.embedder.label).toBe("AI SDK (azure)");
   });
 
+  it("resolves structured google embedding config for Studio RAG status (#435)", async () => {
+    const googleStructured = {
+      ...STUDIO_TEST_BASE,
+      ai: {
+        provider: "google",
+        providerConfig: {
+          google: { apiKey: "test-google-key" },
+        },
+        embedding: {
+          model: "gemini-embedding-001",
+          dimensions: 768,
+        },
+      },
+      rag: {
+        embedder: "ai",
+        store: "memory",
+        storeConfig: { memory: {} },
+      },
+    };
+    installStudioRuntime({}, googleStructured as any);
+
+    const schemaDir = copyFixture();
+    const server = createStudioServer({ schema: schemaDir });
+    servers.push(server);
+    const baseUrl = await listen(server);
+
+    const status = await getJson(`${baseUrl}/api/rag/status`);
+    expect(status.embedder.provider).toBe("google");
+    expect(status.expectedEmbedderId).toBe("ai-sdk:google:gemini-embedding-001:768");
+  });
+
   it("surfaces provider details when Studio RAG embedding requests fail", async () => {
     const embeddingServer = createFailingEmbeddingServer();
     embeddingServers.push(embeddingServer);
     const embeddingBaseUrl = await listen(embeddingServer);
-    installStudioRuntime({
-      ASKDB_RAG_EMBEDDER: "openai",
-      ASKDB_RAG_EMBEDDER_DIMENSIONS: "4",
-      OPENAI_API_KEY: "test-key",
-      OPENAI_BASE_URL: embeddingBaseUrl,
-    });
+    installStudioRuntime(
+      {},
+      {
+        ...STUDIO_TEST_BASE,
+        ai: {
+          provider: "openai",
+          providerConfig: {
+            openai: {
+              apiKey: "test-key",
+              baseUrl: embeddingBaseUrl,
+            },
+          },
+          language: { model: "gpt-4o-mini" },
+          embedding: {
+            model: "text-embedding-3-small",
+            dimensions: 4,
+          },
+        },
+        rag: {
+          embedder: "ai",
+          store: "memory",
+          storeConfig: { memory: {} },
+        },
+      },
+    );
 
     const schemaDir = copyFixture();
     const server = createStudioServer({ schema: schemaDir });

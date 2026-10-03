@@ -38,7 +38,7 @@ Set `ai.provider` in `askdb.config.ts` and supply the matching env var. The CLI,
 
 ```ts
 // askdb.config.ts
-export default {
+export default defineConfig({
   ai: {
     provider: "openai",
     providerConfig: {
@@ -46,19 +46,22 @@ export default {
         apiKey: env("OPENAI_API_KEY"),
       },
     },
+    language: {
+      model: env("OPENAI_MODEL"),
+    },
   },
   // ...
-};
+});
 ```
 
-Default model: `gpt-4o-mini`. To use a different one, set `model` in `providerConfig.openai` (the scaffolded config reads it from `OPENAI_MODEL`).
+Default model: `gpt-4o-mini`. To use a different one, set `model` in `ai.language` (the scaffolded config reads it from `OPENAI_MODEL`).
 
   </TabItem>
   <TabItem label="Anthropic">
 
 ```ts
 // askdb.config.ts
-export default {
+export default defineConfig({
   ai: {
     provider: "anthropic",
     providerConfig: {
@@ -66,19 +69,22 @@ export default {
         apiKey: env("ANTHROPIC_API_KEY"),
       },
     },
+    language: {
+      model: env("ANTHROPIC_MODEL"),
+    },
   },
   // ...
-};
+});
 ```
 
-Default model: `claude-sonnet-4-6`. To use a different one, set `model` in `providerConfig.anthropic` (bind it to `ANTHROPIC_MODEL` in your config).
+Default model: `claude-sonnet-4-6`. To use a different one, set `model` in `ai.language` (bind it to `ANTHROPIC_MODEL` in your config). Note: Anthropic does not provide an embeddings API; if using Anthropic for language generation with RAG, configure a separate provider under `ai.embedding`.
 
   </TabItem>
   <TabItem label="Google">
 
 ```ts
 // askdb.config.ts
-export default {
+export default defineConfig({
   ai: {
     provider: "google",
     providerConfig: {
@@ -86,17 +92,22 @@ export default {
         apiKey: env("GOOGLE_GENERATIVE_AI_API_KEY"),
       },
     },
+    language: {
+      model: env("GOOGLE_AI_MODEL"),
+    },
   },
   // ...
-};
+});
 ```
+
+Default model: `gemini-2.0-flash`. To use a different one, set `model` in `ai.language` (the scaffolded config reads it from `GOOGLE_AI_MODEL`).
 
   </TabItem>
   <TabItem label="Azure OpenAI">
 
 ```ts
 // askdb.config.ts
-export default {
+export default defineConfig({
   ai: {
     provider: "azure",
     providerConfig: {
@@ -105,33 +116,38 @@ export default {
         resourceName: env("AZURE_RESOURCE_NAME"),
       },
     },
+    language: {
+      model: env("AZURE_OPENAI_DEPLOYMENT"),
+    },
   },
   // ...
-};
+});
 ```
 
-Set `model` in `providerConfig.azure` to your deployment name (the scaffolded config reads it from `AZURE_OPENAI_DEPLOYMENT`).
+Set `model` in `ai.language` to your deployment name (the scaffolded config reads it from `AZURE_OPENAI_DEPLOYMENT`).
 
   </TabItem>
   <TabItem label="Vercel AI Gateway">
 
 ```ts
 // askdb.config.ts
-export default {
+export default defineConfig({
   ai: {
     provider: "gateway",
     providerConfig: {
       gateway: {
         apiKey: env("AI_GATEWAY_API_KEY"),
-        model: "anthropic/claude-sonnet-4-6",
       },
+    },
+    language: {
+      model: "anthropic/claude-sonnet-4-6",
     },
   },
   // ...
-};
+});
 ```
 
-Gateway model ids are `<upstream>/<model>`. The default is `openai/gpt-4o-mini`. The gateway provider ships with `ai`, so it needs no extra package.
+Gateway model ids are `<upstream>/<model>`. The default is `openai/gpt-4o-mini`. Set `model` in `ai.language`. The gateway provider ships with `ai`, so it needs no extra package.
 
   </TabItem>
 </Tabs>
@@ -281,14 +297,14 @@ const model = await ai.createLanguageModelFromEnv(rt.ai.aiEnv);
 
 ## Reasoning/latency effort
 
-Set `ai.reasoning` in `askdb.config.ts` (see the [config reference](/reference/config/#ai-reasoning--reasoninglatency-effort)) for the config-driven path. Skip it and current behavior is unchanged — no `providerOptions` are sent, and the provider/model uses its own default.
+Set `ai.language.reasoning` in `askdb.config.ts` (see the [config reference](/reference/config/#ai-configuration-provider-connections-language-and-embeddings)) for the config-driven path. Skip it and current behavior is unchanged — no `providerOptions` are sent, and the provider/model uses its own default.
 
-**With `@askdb/client`**, `createAskDb` resolves `ai.reasoning.nlToSql`/`effort` automatically — nothing else to wire. Override per call, or set a client-level default:
+**With `@askdb/client`**, `createAskDb` resolves `ai.language.reasoning.nlToSql`/`effort` automatically — nothing else to wire. Override per call, or set a client-level default:
 
 ```ts
 const askdb = createAskDb({
   config: getAskDbRuntimeConfig(),
-  reasoningEffort: "medium", // client-level default, overrides ai.reasoning from config
+  reasoningEffort: "medium", // client-level default, overrides ai.language.reasoning from config
 });
 
 const { sql } = await askdb.ask("Which customers signed up last week?", {

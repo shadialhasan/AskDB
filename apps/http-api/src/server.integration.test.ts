@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import {
   flattenAskDbConfig,
   resetAskDbRuntimeForTests,
@@ -9,7 +10,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { createAskDbHttpServer } from "./server.js";
 
-const schemaPath = new URL("../../../fixtures/schemas/orders-users.schema/", import.meta.url);
+const schemaPath = fileURLToPath(new URL("../../../fixtures/schemas/orders-users.schema/", import.meta.url));
 
 const unsupportedProviderSchemaJson = JSON.stringify({
   version: 2,
@@ -29,10 +30,14 @@ const unsupportedProviderSchemaJson = JSON.stringify({
 });
 
 const BASE_CONFIG: AskDbConfig = {
-  ai: { provider: "openai", providerConfig: { openai: { apiKey: "x", model: "gpt-4o-mini" } } },
+  ai: {
+    provider: "openai",
+    providerConfig: { openai: { apiKey: "x" } },
+    language: { model: "gpt-4o-mini" },
+  },
   database: { provider: "postgres", providerConfig: { postgres: { databaseUrl: "postgres://localhost/db" } } },
   introspection: { provider: "postgres", providerConfig: { postgres: {} }, outputDir: "./askdb/" },
-  rag: { embedder: "mock", embedderConfig: {}, store: "memory", storeConfig: { memory: {} } },
+  rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
 };
 
 function installTestRuntime(opts: {
@@ -60,7 +65,7 @@ describe("http-api", () => {
     installTestRuntime({
       mockSql: "select 1",
       logLevel: "silent",
-      host: { schemaPath: schemaPath.pathname },
+      host: { schemaPath: schemaPath },
     });
 
     const app = createAskDbHttpServer({ host: "127.0.0.1", port: 0 });
@@ -93,7 +98,7 @@ describe("http-api", () => {
       logLevel: "silent",
     });
 
-    const app = createAskDbHttpServer({ host: "127.0.0.1", port: 0, schemaPath: schemaPath.pathname });
+    const app = createAskDbHttpServer({ host: "127.0.0.1", port: 0, schemaPath: schemaPath });
     await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
     const addr = app.server.address();
     if (!addr || typeof addr === "string") throw new Error("expected inet address");
@@ -120,7 +125,7 @@ describe("http-api", () => {
       host: { schemaPath: "__missing_http_api_schema__" },
     });
 
-    const app = createAskDbHttpServer({ host: "127.0.0.1", port: 0, schemaPath: schemaPath.pathname });
+    const app = createAskDbHttpServer({ host: "127.0.0.1", port: 0, schemaPath: schemaPath });
     await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
     const addr = app.server.address();
     if (!addr || typeof addr === "string") throw new Error("expected inet address");
@@ -144,7 +149,7 @@ describe("http-api", () => {
     installTestRuntime({
       mockSql: "select 1",
       logLevel: "silent",
-      host: { schemaPath: schemaPath.pathname },
+      host: { schemaPath: schemaPath },
     });
 
     const app = createAskDbHttpServer({ host: "127.0.0.1", port: 0 });
@@ -253,7 +258,7 @@ describe("http-api", () => {
     installTestRuntime({
       mockSql: "select 1",
       logLevel: "silent",
-      host: { schemaPath: schemaPath.pathname },
+      host: { schemaPath: schemaPath },
       modes: { askdbMode: "schema_only" },
     });
 
@@ -281,7 +286,7 @@ describe("http-api", () => {
     installTestRuntime({
       mockSql: "delete from users",
       logLevel: "silent",
-      host: { schemaPath: schemaPath.pathname },
+      host: { schemaPath: schemaPath },
     });
 
     const app = createAskDbHttpServer({ host: "127.0.0.1", port: 0 });
@@ -392,8 +397,12 @@ describe("http-api", () => {
     // has no OPENAI_API_KEY and createLanguageModelFromEnv returns undefined.
     const noKeyConfig: AskDbConfig = {
       ...BASE_CONFIG,
-      ai: { provider: "openai", providerConfig: { openai: { apiKey: "", model: "gpt-4o-mini" } } },
-      host: { schemaPath: schemaPath.pathname },
+      ai: {
+        provider: "openai",
+        providerConfig: { openai: { apiKey: "" } },
+        language: { model: "gpt-4o-mini" },
+      },
+      host: { schemaPath: schemaPath },
     };
     setAskDbRuntimeForTests({ structured: noKeyConfig, flat: flattenAskDbConfig(noKeyConfig) });
 

@@ -20,7 +20,7 @@ function configFor(provider: string, providerConfig: Record<string, string>): As
       providerConfig: { postgres: { databaseUrl: "postgres://localhost/db" } },
       outputDir: "./askdb/",
     },
-    rag: { embedder: "mock", embedderConfig: {}, store: "memory", storeConfig: { memory: {} } },
+    rag: { embedder: "mock", store: "memory", storeConfig: { memory: {} } },
   };
 }
 

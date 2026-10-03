@@ -28,7 +28,7 @@ export type ResolveConfigOptions = {
   usage: AiUsage;
   /** Default model when no env override is set. */
   modelDefault?: string;
-  /** Per-app embedding model env var (e.g. `ASKDB_RAG_EMBEDDER_MODEL`). Embedding usage only. */
+  /** Per-app embedding model env var. Embedding usage only. */
   modelEnvVar?: string;
 };
 
@@ -40,6 +40,7 @@ export type ProviderEnvSpec = {
   embeddingModelVars?: readonly string[];
   baseURLVars?: readonly string[];
   defaultModel?: string;
+  /** @deprecated Use explicit embedding model; removed at 1.0. */
   defaultEmbeddingModel?: string;
 };
 
@@ -110,25 +111,46 @@ export function resolveBaseConfig(
   };
 }
 
+let warnedDefaultEmbeddingModel = false;
+
+export function resetWarnedDefaultEmbeddingModelForTests(): void {
+  warnedDefaultEmbeddingModel = false;
+}
+
 function resolveModel(
   provider: string,
   env: AiEnv,
   spec: ProviderEnvSpec,
   options: ResolveConfigOptions,
 ): string {
-  const model =
-    options.usage === "embedding"
-      ? first(env, options.modelEnvVar ? [options.modelEnvVar] : []) ||
-        first(env, ["ASKDB_AI_EMBEDDING_MODEL"]) ||
-        first(env, ["ASKDB_EMBEDDING_MODEL"]) ||
-        first(env, spec.embeddingModelVars ?? []) ||
-        options.modelDefault ||
-        spec.defaultEmbeddingModel
-      : first(env, ["ASKDB_AI_MODEL"]) ||
-        first(env, ["ASKDB_MODEL"]) ||
-        first(env, spec.modelVars ?? []) ||
-        options.modelDefault ||
-        spec.defaultModel;
+  let model: string | undefined;
+
+  if (options.usage === "embedding") {
+    model =
+      first(env, options.modelEnvVar ? [options.modelEnvVar] : []) ||
+      first(env, ["ASKDB_AI_EMBEDDING_MODEL"]) ||
+      first(env, ["ASKDB_EMBEDDING_MODEL"]) ||
+      first(env, spec.embeddingModelVars ?? []) ||
+      options.modelDefault;
+
+    if (!model && spec.defaultEmbeddingModel) {
+      if (!warnedDefaultEmbeddingModel) {
+        warnedDefaultEmbeddingModel = true;
+        process.emitWarning(
+          "Default embedding model is deprecated; set ASKDB_AI_EMBEDDING_MODEL or the provider's embedding model variable; the default is removed at 1.0",
+          { type: "DeprecationWarning", code: "ASKDB_AI_DEFAULT_EMBEDDING_MODEL" },
+        );
+      }
+      model = spec.defaultEmbeddingModel;
+    }
+  } else {
+    model =
+      first(env, ["ASKDB_AI_MODEL"]) ||
+      first(env, ["ASKDB_MODEL"]) ||
+      first(env, spec.modelVars ?? []) ||
+      options.modelDefault ||
+      spec.defaultModel;
+  }
 
   if (!model) {
     throw new Error(

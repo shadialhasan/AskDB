@@ -36,17 +36,30 @@ There are three provisioning paths — pick the one that matches your deploy sto
 Studio auto-provisions the pgvector schema on first use. Configure the store in `askdb.config.ts`:
 
 ```ts
-export default {
+import { defineConfig, env } from "@askdb/config";
+
+export default defineConfig({
+  ai: {
+    provider: "openai",
+    providerConfig: {
+      openai: {
+        apiKey: env("OPENAI_API_KEY"),
+      },
+    },
+    embedding: {
+      model: env("OPENAI_EMBEDDING_MODEL"),
+    },
+  },
   rag: {
-    embedder: "openai",
+    embedder: "ai",
     store: "pgvector",
     storeConfig: {
       pgvector: {
-        databaseUrl: process.env.PGVECTOR_URL,
+        databaseUrl: env("PGVECTOR_URL"),
       },
     },
   },
-};
+});
 ```
 
 Launch Studio (`npx askdb studio --schema ./my-app.schema`) and the first RAG operation creates the table.
